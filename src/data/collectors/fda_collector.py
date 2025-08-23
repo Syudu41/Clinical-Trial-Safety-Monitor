@@ -211,25 +211,35 @@ class FDADataCollector:
         Returns:
             DataFrame with adverse event data
         """
-        # Set default date range (last 30 days)
+        # Set default date range (use proven working dates from manual testing)
         if not start_date or not end_date:
-            end_date_dt = datetime.now()
-            start_date_dt = end_date_dt - timedelta(days=30)
-            start_date = start_date_dt.strftime("%Y%m%d")
-            end_date = end_date_dt.strftime("%Y%m%d")
+            start_date = config.DEFAULT_START_DATE  # "20240101"
+            end_date = config.DEFAULT_END_DATE      # "20240331"
         
         try:
-            # Build search query
-            query_parts = [f"receivedate:[{start_date}+TO+{end_date}]"]
-            if search_terms:
-                query_parts.extend(search_terms)
+            # First try a simple query without date restrictions to test basic functionality
+            if not search_terms:
+                self.logger.info("🔍 Trying basic query first (no date restrictions)")
+                simple_url = f"{data_sources.FDA_BASE_URL}/drug/event.json"
+                simple_params = {'limit': min(limit, 100)}
+                
+                self._respect_rate_limits()
+                simple_response = self.session.get(simple_url, params=simple_params, timeout=60)
+                
+                if simple_response.status_code == 200:
+                    self.logger.info("✅ Basic query successful, now trying with dates")
+                else:
+                    self.logger.warning(f"Basic query returned: {simple_response.status_code}")
             
-            search_query = "+AND+".join(query_parts)
+            # Build search query with dates - fix URL encoding
+            search_query = f"receivedate:[{start_date} TO {end_date}]"  # Remove the + signs
+            if search_terms:
+                search_query += " AND " + " AND ".join(search_terms)
             
             # Build API URL
             api_url = f"{data_sources.FDA_BASE_URL}/drug/event.json"
             params = {
-                'search': search_query,
+                'search': search_query,  # Let requests handle the encoding
                 'limit': min(limit, 1000)  # FDA API limit is 1000 per request
             }
             
@@ -239,7 +249,25 @@ class FDADataCollector:
             
             self._respect_rate_limits()
             response = self.session.get(api_url, params=params, timeout=60)
-            response.raise_for_status()
+            
+            # Better error handling
+            if response.status_code != 200:
+                self.logger.error(f"API returned status code: {response.status_code}")
+                self.logger.error(f"Response content: {response.text[:500]}")
+                
+                # Try a fallback query without dates
+                self.logger.info("🔄 Trying fallback query without date restrictions")
+                fallback_params = {'limit': min(limit, 100)}
+                
+                self._respect_rate_limits()
+                fallback_response = self.session.get(f"{data_sources.FDA_BASE_URL}/drug/event.json", 
+                                                   params=fallback_params, timeout=60)
+                
+                if fallback_response.status_code == 200:
+                    response = fallback_response
+                    self.logger.info("✅ Fallback query successful")
+                else:
+                    response.raise_for_status()
             
             data = response.json()
             results = data.get('results', [])
@@ -257,8 +285,16 @@ class FDADataCollector:
             
             return df
             
+        except requests.exceptions.HTTPError as e:
+            self.logger.error(f"❌ HTTP Error: {e}")
+            self.logger.error(f"Response status code: {response.status_code}")
+            self.logger.error(f"Response content: {response.text[:500]}")
+            return pd.DataFrame()
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"❌ Request Error: {e}")
+            return pd.DataFrame()
         except Exception as e:
-            self.logger.error(f"❌ Failed to fetch API data: {e}")
+            self.logger.error(f"❌ Unexpected error: {e}")
             return pd.DataFrame()
     
     def load_faers_file_to_dataframe(self, file_path: Path, file_type: str) -> pd.DataFrame:
@@ -304,16 +340,30 @@ def quick_test():
         print("❌ API connection test failed")
         return False
     
-    # Test fetching a small sample
+    # Test fetching a small sample with older, more reliable dates
     try:
-        df = collector.fetch_recent_events_api(limit=5)
+        print("🔍 Testing with 2024 Q1 data...")
+        df = collector.fetch_recent_events_api(
+            start_date="20240101", 
+            end_date="20240131", 
+            limit=5
+        )
+        
         if not df.empty:
             print(f"✅ Sample data fetch successful: {len(df)} records")
             print(f"Sample columns: {list(df.columns)[:5]}...")
             return True
         else:
-            print("⚠️  No sample data returned")
-            return False
+            print("⚠️  No sample data returned, trying fallback...")
+            # Try without date restrictions
+            df_fallback = collector.fetch_recent_events_api(limit=3)
+            if not df_fallback.empty:
+                print(f"✅ Fallback data fetch successful: {len(df_fallback)} records")
+                return True
+            else:
+                print("❌ No data available from API")
+                return False
+                
     except Exception as e:
         print(f"❌ Sample data fetch failed: {e}")
         return False

@@ -41,6 +41,10 @@ class Config:
     MAX_RECORDS_PER_FILE = 50000  # for Day 1 development
     RANDOM_SEED = 42  # for reproducibility
     
+    # Default date range for API queries (proven to work from manual test)
+    DEFAULT_START_DATE = "20240101"  # Jan 1, 2024
+    DEFAULT_END_DATE = "20240331"    # Mar 31, 2024 (Q1 2024)
+    
     # Database Configuration
     DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://localhost:5432/clinical_safety')
     SQLITE_DB_PATH = DATA_DIR / "clinical_safety.db"  # fallback option
@@ -60,7 +64,7 @@ class DataSources:
     
     # API Base URLs
     FDA_BASE_URL = "https://api.fda.gov"
-    CLINICALTRIALS_BASE_URL = "https://clinicaltrials.gov/api"
+    CLINICALTRIALS_BASE_URL = "https://clinicaltrials.gov/api/v2"  # Updated to v2 API
     
     # FDA FAERS Quarterly Data URLs (recent quarters)
     FAERS_QUARTERS = {
@@ -82,7 +86,7 @@ class DataSources:
     
     # Sample API endpoints for testing
     FDA_TEST_ENDPOINT = "/drug/event.json?search=receivedate:[20240101+TO+20241231]&limit=10"
-    CT_TEST_ENDPOINT = "/query/study_fields?expr=AREA[Phase]&fields=NCTId,BriefTitle,Phase&fmt=json&max_rnk=10"
+    # ClinicalTrials.gov v2.0 uses different endpoint structure - no test endpoint needed
 
 class MLConfig:
     """Machine Learning specific configurations"""

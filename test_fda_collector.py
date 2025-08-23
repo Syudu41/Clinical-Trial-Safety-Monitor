@@ -43,15 +43,25 @@ def main():
     try:
         collector = FDADataCollector()
         
-        # Test small API fetch
-        print("\n🔍 Testing API data fetch...")
-        sample_df = collector.fetch_recent_events_api(limit=3)
+        # Test small API fetch with proven working dates
+        print("\n🔍 Testing API data fetch with Jan 2024 data...")
+        sample_df = collector.fetch_recent_events_api(
+            start_date="20240101", 
+            end_date="20240131", 
+            limit=3
+        )
         
         if not sample_df.empty:
             print(f"✅ Successfully fetched {len(sample_df)} sample records")
             print("\n📊 Sample data structure:")
             print(f"Shape: {sample_df.shape}")
             print(f"Columns: {list(sample_df.columns)[:10]}...")  # First 10 columns
+            
+            # Show sample data
+            print(f"\nSample data preview:")
+            for col in ['safetyreportid', 'serious', 'receivedate'][:3]:
+                if col in sample_df.columns:
+                    print(f"  {col}: {sample_df[col].iloc[0] if len(sample_df) > 0 else 'N/A'}")
             
             # Save sample data
             sample_file = Path("data/raw/sample_fda_data.csv")
