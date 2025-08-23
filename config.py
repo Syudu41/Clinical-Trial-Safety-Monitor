@@ -27,10 +27,6 @@ class Config:
     for directory in [DATA_DIR, RAW_DATA_DIR, PROCESSED_DATA_DIR, MODELS_DIR, LOGS_DIR, NOTEBOOKS_DIR]:
         directory.mkdir(exist_ok=True)
     
-    # API Configuration
-    FDA_BASE_URL = "https://api.fda.gov"
-    CLINICALTRIALS_BASE_URL = "https://clinicaltrials.gov/api"
-    
     # FDA API Settings
     FDA_API_RATE_LIMIT = 240  # requests per hour
     FDA_API_DAILY_LIMIT = 1000  # requests per day
@@ -61,6 +57,10 @@ class Config:
 
 class DataSources:
     """Data source specific configurations"""
+    
+    # API Base URLs
+    FDA_BASE_URL = "https://api.fda.gov"
+    CLINICALTRIALS_BASE_URL = "https://clinicaltrials.gov/api"
     
     # FDA FAERS Quarterly Data URLs (recent quarters)
     FAERS_QUARTERS = {
