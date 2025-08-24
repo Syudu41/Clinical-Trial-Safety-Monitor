@@ -96,9 +96,10 @@ class ClinicalTrialsCollector:
             # Build API URL for studies
             api_url = f"{data_sources.CLINICALTRIALS_BASE_URL}/studies"
             
-            # Parameters for the API call (v2.0 format)
+            # Parameters for the API call (v2.0 format) - updated approach
+            phase_term = f"{phase.lower().replace('phase', 'phase ')}"  # Convert "PHASE3" to "phase 3"
             params = {
-                'query.phase': phase.upper().replace(' ', ''),  # Convert "Phase 3" to "PHASE3"
+                'query.term': phase_term,  # Search in general terms instead of specific phase field
                 'countTotal': 'true',
                 'pageSize': min(max_studies, 1000)  # API limit
             }
