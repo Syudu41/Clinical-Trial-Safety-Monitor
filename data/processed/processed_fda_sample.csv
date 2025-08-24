@@ -1,0 +1,4 @@
+safetyreportid,is_serious,serious,receivedate,weight_group,drug_count,reaction_count,outcome_severity,reporting_lag_days,transmissiondate,primarysourcecountry,occurcountry,age_group_unknown,age_group_nan,gender_unknown,gender_nan,primary_drug_unknown,primary_drug_nan,primary_reaction_unknown,primary_reaction_nan,patient_risk_score,drug_risk_score,report_month,report_year
+23353582,0,2,20240101,unknown,0,0,0,0,20240410,US,US,True,False,True,False,True,False,True,False,0.0,0.9,1,2024
+23353583,0,2,20240101,unknown,0,0,0,0,20240410,US,US,True,False,True,False,True,False,True,False,0.0,0.9,1,2024
+23353584,0,2,20240101,unknown,0,0,0,0,20240410,US,US,True,False,True,False,True,False,True,False,0.0,0.9,1,2024

@@ -13,6 +13,11 @@ tqdm
 scipy
 plotly
 
+# AWS Lambda Requirements - Lightweight versions
+boto3
+psycopg2-binary7
+numpy
+
 # Database (we'll start with SQLite, add PostgreSQL later if needed)
 # psycopg2-binary
 

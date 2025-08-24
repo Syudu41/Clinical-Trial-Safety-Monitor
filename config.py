@@ -146,7 +146,7 @@ class KafkaConfig:
     }
 
 class AWSConfig:
-    """AWS configuration (for Day 3+)"""
+    """AWS configuration"""
     
     # AWS Credentials (use environment variables)
     AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
@@ -154,7 +154,15 @@ class AWSConfig:
     AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
     
     # S3 Configuration
-    S3_BUCKET = os.getenv('S3_BUCKET', 'clinical-safety-data')
+    S3_RAW_BUCKET = os.getenv('AWS_S3_RAW_BUCKET', 'clinical-safety-data-2025-yourname')
+    S3_PROCESSED_BUCKET = os.getenv('AWS_S3_PROCESSED_BUCKET', 'clinical-safety-processed-2025-yourname')
+    
+    # RDS PostgreSQL Configuration
+    RDS_HOST = os.getenv('AWS_RDS_HOST')
+    RDS_DATABASE = os.getenv('AWS_RDS_DATABASE', 'clinical_safety')
+    RDS_USER = os.getenv('AWS_RDS_USER', 'postgres')
+    RDS_PASSWORD = os.getenv('AWS_RDS_PASSWORD')
+    RDS_PORT = int(os.getenv('AWS_RDS_PORT', '5432'))
     
     # Lambda Configuration
     LAMBDA_FUNCTION_NAME = os.getenv('LAMBDA_FUNCTION_NAME', 'safety-event-processor')
