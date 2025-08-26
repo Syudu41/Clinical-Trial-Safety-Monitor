@@ -1,5 +1,5 @@
 """
-AWS Lambda Deployment Script
+AWS Lambda Deployment Script - WITH S3 SUPPORT FOR LARGE PACKAGES
 Packages and deploys the Clinical Trial Safety Event Processor to AWS Lambda
 """
 
@@ -25,10 +25,36 @@ class LambdaDeployer:
         
         # Lambda configuration
         self.function_name = 'clinical-safety-processor'
-        self.runtime = 'python3.9'  # Stable Lambda runtime
+        self.runtime = 'python3.11'
         self.handler = 'lambda_function.lambda_handler'
         self.timeout = 300  # 5 minutes
         self.memory_size = 512  # MB
+    
+    def clean_deployment_directory(self):
+        """Clean deployment directory of installed packages"""
+        if not self.deployment_dir.exists():
+            return
+            
+        # Keep these essential files
+        keep_files = {'lambda_function.py', 'lambda_handler.py', 'requirements.txt'}
+        
+        cleaned_count = 0
+        for item in self.deployment_dir.iterdir():
+            if item.name not in keep_files:
+                try:
+                    if item.is_file():
+                        item.unlink()
+                        cleaned_count += 1
+                    elif item.is_dir():
+                        shutil.rmtree(item)
+                        cleaned_count += 1
+                except Exception as e:
+                    print(f"⚠️ Could not clean {item}: {e}")
+        
+        if cleaned_count > 0:
+            print(f"✅ Cleaned {cleaned_count} package folders/files")
+        else:
+            print("✅ Deployment directory already clean")
         
     def create_deployment_package(self):
         """Create deployment package directory and files"""
@@ -37,19 +63,15 @@ class LambdaDeployer:
         # Create deployment directory
         self.deployment_dir.mkdir(parents=True, exist_ok=True)
         
-        # Clean existing files
-        for file in self.deployment_dir.glob("*"):
-            if file.is_file():
-                file.unlink()
-            elif file.is_dir():
-                shutil.rmtree(file)
+        # Clean existing files first
+        print("🧹 Cleaning deployment directory...")
+        self.clean_deployment_directory()
         
-        # Copy main Lambda files - check multiple possible locations
+        # Copy main Lambda files
         source_files = [
-            # (possible_source_paths, dest_name)
             (["src/aws/lambda_handler.py"], "lambda_handler.py"),
-            (["src/aws/deployment_package/lambda_function.py", "src/aws/lambda_function.py"], "lambda_function.py"),
-            (["src/aws/deployment_package/requirements.txt", "src/aws/requirements.txt", "requirements.txt"], "requirements.txt")
+            (["src/aws/lambda_function.py"], "lambda_function.py"),
+            (["lambda_requirements.txt"], "requirements.txt")
         ]
         
         for possible_sources, dest_name in source_files:
@@ -63,63 +85,65 @@ class LambdaDeployer:
                     break
             
             if not copied:
-                print(f"⚠️ Warning: Could not find {dest_name} in any of these locations:")
-                for src_path in possible_sources:
-                    print(f"   - {src_path}")
-                
-                # Create default requirements.txt if missing
                 if dest_name == "requirements.txt":
-                    print("📝 Creating default requirements.txt...")
-                    default_requirements = """# Lambda Deployment Requirements
-scikit-learn==1.3.2
-pandas==2.1.4  
-numpy==1.24.4
-psycopg2-binary==2.9.9
-"""
+                    print("📝 Creating minimal Lambda requirements.txt...")
+                    default_requirements = """pandas
+numpy
+scikit-learn
+psycopg2-binary"""
                     with open(self.deployment_dir / "requirements.txt", "w") as f:
                         f.write(default_requirements)
-                    print("✅ Created default requirements.txt")
+                    print("✅ Created minimal requirements.txt")
+                else:
+                    print(f"❌ Could not find {dest_name}")
+                    if dest_name == "lambda_function.py":
+                        return False
         
         print(f"✅ Deployment package created in {self.deployment_dir}")
+        return True
     
     def install_dependencies(self):
         """Install Python dependencies for Lambda deployment package"""
         print("📚 Installing Lambda dependencies...")
-        print("ℹ️  Note: Installing packages INTO deployment package (separate from your local environment)")
         
         requirements_file = self.deployment_dir / "requirements.txt"
         if not requirements_file.exists():
             print("❌ requirements.txt not found")
             return False
         
+        # Show what we're installing
+        print("📋 Installing these packages for Lambda:")
+        with open(requirements_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    print(f"   - {line}")
+        
         try:
-            # Install dependencies directly into deployment directory
-            # This creates a local copy of packages that will be zipped with Lambda function
             print(f"📦 Installing packages to: {self.deployment_dir}")
-            subprocess.run([
+            result = subprocess.run([
                 sys.executable, "-m", "pip", "install",
                 "-r", str(requirements_file),
-                "-t", str(self.deployment_dir),  # Install TO deployment directory
-                "--no-deps"  # Avoid dependency conflicts with Lambda runtime
-            ], check=True, capture_output=True, text=True)
+                "-t", str(self.deployment_dir),
+                "--only-binary=all",  # Force pre-compiled wheels
+                "--quiet"
+            ], capture_output=True, text=True)
             
-            # Show what was installed
-            installed_packages = []
+            if result.returncode != 0:
+                print(f"❌ pip install failed: {result.stderr}")
+                return False
+            
+            # Count installed packages
+            package_count = 0
             for item in self.deployment_dir.iterdir():
-                if item.is_dir() and not item.name.startswith('.'):
-                    installed_packages.append(item.name)
+                if item.is_dir() and not item.name.startswith('.') and item.name not in {'__pycache__'}:
+                    package_count += 1
             
-            print(f"✅ Installed {len(installed_packages)} packages for Lambda:")
-            for pkg in sorted(installed_packages)[:5]:  # Show first 5
-                print(f"   - {pkg}")
-            if len(installed_packages) > 5:
-                print(f"   ... and {len(installed_packages) - 5} more")
-            
+            print(f"✅ Successfully installed {package_count} packages for Lambda")
             return True
             
-        except subprocess.CalledProcessError as e:
+        except Exception as e:
             print(f"❌ Failed to install dependencies: {e}")
-            print(f"Error output: {e.stderr}")
             return False
     
     def create_zip_package(self):
@@ -131,37 +155,53 @@ psycopg2-binary==2.9.9
             self.zip_file.unlink()
         
         # Create ZIP file
+        file_count = 0
         with zipfile.ZipFile(self.zip_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file_path in self.deployment_dir.rglob("*"):
                 if file_path.is_file():
-                    # Add file to ZIP with relative path
                     arcname = file_path.relative_to(self.deployment_dir)
                     zipf.write(file_path, arcname)
+                    file_count += 1
         
-        # Check ZIP size (Lambda has 50MB limit for direct upload)
+        # Check ZIP size
         zip_size = self.zip_file.stat().st_size / (1024 * 1024)  # MB
-        print(f"✅ ZIP package created: {self.zip_file.name} ({zip_size:.1f} MB)")
+        print(f"✅ ZIP package created: {self.zip_file.name} ({zip_size:.1f} MB, {file_count} files)")
         
         if zip_size > 50:
-            print("⚠️ Warning: Package size exceeds 50MB. Consider using S3 for deployment.")
+            print("⚠️ Package exceeds 50MB - will use S3 deployment method")
         
-        return zip_size <= 50
+        return True
+    
+    def upload_to_s3(self):
+        """Upload ZIP package to S3 for large deployments"""
+        print("📤 Uploading large package to S3...")
+        
+        # Use your processed bucket for deployment
+        deployment_bucket = os.environ.get('AWS_S3_PROCESSED_BUCKET', 'clinical-safety-processed-2025-yourname')
+        deployment_key = f"lambda-deployments/{self.function_name}.zip"
+        
+        try:
+            s3_client = boto3.client('s3')
+            
+            print(f"📦 Uploading to s3://{deployment_bucket}/{deployment_key}")
+            with open(self.zip_file, 'rb') as f:
+                s3_client.upload_fileobj(
+                    f, 
+                    deployment_bucket, 
+                    deployment_key,
+                    ExtraArgs={'ServerSideEncryption': 'AES256'}
+                )
+            
+            print("✅ Package uploaded to S3 successfully")
+            return deployment_bucket, deployment_key
+            
+        except Exception as e:
+            print(f"❌ Failed to upload to S3: {e}")
+            return None, None
     
     def create_lambda_role(self):
-        """Create IAM role for Lambda function"""
+        """Create or get existing IAM role for Lambda function"""
         role_name = f"{self.function_name}-role"
-        
-        # Trust policy for Lambda
-        trust_policy = {
-            "Version": "2012-10-17",
-            "Statement": [
-                {
-                    "Effect": "Allow",
-                    "Principal": {"Service": "lambda.amazonaws.com"},
-                    "Action": "sts:AssumeRole"
-                }
-            ]
-        }
         
         try:
             # Check if role already exists
@@ -175,54 +215,51 @@ psycopg2-binary==2.9.9
             
             # Create new role
             print(f"🔑 Creating IAM role: {role_name}")
+            
+            trust_policy = {
+                "Version": "2012-10-17",
+                "Statement": [{
+                    "Effect": "Allow",
+                    "Principal": {"Service": "lambda.amazonaws.com"},
+                    "Action": "sts:AssumeRole"
+                }]
+            }
+            
             response = self.iam_client.create_role(
                 RoleName=role_name,
-                AssumeRolePolicyDocument=json.dumps(trust_policy),
-                Description=f"IAM role for {self.function_name} Lambda function"
+                AssumeRolePolicyDocument=json.dumps(trust_policy)
             )
-            
             role_arn = response['Role']['Arn']
             
-            # Attach basic Lambda execution policy
-            self.iam_client.attach_role_policy(
-                RoleName=role_name,
-                PolicyArn='arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
-            )
+            # Attach policies
+            policies = [
+                'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
+                'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+            ]
             
-            # Attach VPC execution policy (for RDS access)
-            self.iam_client.attach_role_policy(
-                RoleName=role_name,
-                PolicyArn='arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
-            )
+            for policy_arn in policies:
+                self.iam_client.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
             
-            # Create custom policy for S3 and RDS access
-            custom_policy = {
+            # Custom S3 policy
+            s3_policy = {
                 "Version": "2012-10-17",
-                "Statement": [
-                    {
-                        "Effect": "Allow",
-                        "Action": [
-                            "s3:GetObject",
-                            "s3:PutObject"
-                        ],
-                        "Resource": [
-                            "arn:aws:s3:::clinical-safety-*/*"
-                        ]
-                    }
-                ]
+                "Statement": [{
+                    "Effect": "Allow",
+                    "Action": ["s3:GetObject", "s3:PutObject"],
+                    "Resource": ["arn:aws:s3:::clinical-safety-*/*"]
+                }]
             }
             
             self.iam_client.put_role_policy(
                 RoleName=role_name,
-                PolicyName=f"{role_name}-policy",
-                PolicyDocument=json.dumps(custom_policy)
+                PolicyName=f"{role_name}-s3-policy",
+                PolicyDocument=json.dumps(s3_policy)
             )
             
             print(f"✅ IAM role created: {role_arn}")
             
             # Wait for role propagation
             import time
-            print("⏳ Waiting for role propagation...")
             time.sleep(10)
             
             return role_arn
@@ -232,16 +269,16 @@ psycopg2-binary==2.9.9
             return None
     
     def deploy_lambda_function(self, role_arn):
-        """Deploy Lambda function to AWS"""
+        """Deploy Lambda function to AWS (handles S3 for large packages)"""
         print(f"🚀 Deploying Lambda function: {self.function_name}")
         
-        # Read ZIP package
-        with open(self.zip_file, 'rb') as f:
-            zip_content = f.read()
+        # Check if we need S3 deployment (for large packages)
+        zip_size = self.zip_file.stat().st_size / (1024 * 1024)  # MB
+        use_s3_deployment = zip_size > 50
         
-        # Environment variables for Lambda
+        # Environment variables
         environment_vars = {
-            'S3_PROCESSED_BUCKET': 'clinical-safety-processed-2025-yourname',  # Update with actual bucket
+            'S3_PROCESSED_BUCKET': os.environ.get('AWS_S3_PROCESSED_BUCKET', 'clinical-safety-processed-2025-yourname'),
             'RDS_HOST': os.environ.get('AWS_RDS_HOST', ''),
             'RDS_DATABASE': os.environ.get('AWS_RDS_DATABASE', 'clinical_safety'),
             'RDS_USER': os.environ.get('AWS_RDS_USER', 'postgres'),
@@ -250,16 +287,40 @@ psycopg2-binary==2.9.9
         }
         
         try:
+            # Prepare deployment code config
+            if use_s3_deployment:
+                print("📤 Using S3 deployment for large package...")
+                s3_bucket, s3_key = self.upload_to_s3()
+                if not s3_bucket:
+                    return None
+                
+                code_config = {
+                    'S3Bucket': s3_bucket,
+                    'S3Key': s3_key
+                }
+            else:
+                print("📦 Using direct ZIP deployment...")
+                with open(self.zip_file, 'rb') as f:
+                    zip_content = f.read()
+                code_config = {'ZipFile': zip_content}
+            
             # Check if function exists
             try:
                 self.lambda_client.get_function(FunctionName=self.function_name)
-                # Function exists, update it
                 print("📝 Updating existing Lambda function...")
                 
-                response = self.lambda_client.update_function_code(
-                    FunctionName=self.function_name,
-                    ZipFile=zip_content
-                )
+                # Update function code
+                if use_s3_deployment:
+                    response = self.lambda_client.update_function_code(
+                        FunctionName=self.function_name,
+                        S3Bucket=s3_bucket,
+                        S3Key=s3_key
+                    )
+                else:
+                    response = self.lambda_client.update_function_code(
+                        FunctionName=self.function_name,
+                        ZipFile=code_config['ZipFile']
+                    )
                 
                 # Update configuration
                 self.lambda_client.update_function_configuration(
@@ -272,25 +333,28 @@ psycopg2-binary==2.9.9
                 )
                 
             except self.lambda_client.exceptions.ResourceNotFoundException:
-                # Function doesn't exist, create it
                 print("🆕 Creating new Lambda function...")
                 
-                response = self.lambda_client.create_function(
-                    FunctionName=self.function_name,
-                    Runtime=self.runtime,
-                    Role=role_arn,
-                    Handler=self.handler,
-                    Code={'ZipFile': zip_content},
-                    Description='Clinical Trial Safety Event Processor',
-                    Timeout=self.timeout,
-                    MemorySize=self.memory_size,
-                    Environment={'Variables': environment_vars},
-                    PackageType='Zip'
-                )
+                # Create new function
+                create_params = {
+                    'FunctionName': self.function_name,
+                    'Runtime': self.runtime,
+                    'Role': role_arn,
+                    'Handler': self.handler,
+                    'Code': code_config,
+                    'Description': 'Clinical Trial Safety Event Processor',
+                    'Timeout': self.timeout,
+                    'MemorySize': self.memory_size,
+                    'Environment': {'Variables': environment_vars},
+                    'PackageType': 'Zip'
+                }
+                
+                response = self.lambda_client.create_function(**create_params)
             
             function_arn = response['FunctionArn']
             print(f"✅ Lambda function deployed successfully!")
             print(f"📋 Function ARN: {function_arn}")
+            print(f"📊 Deployment method: {'S3 (Large Package)' if use_s3_deployment else 'Direct ZIP'}")
             return function_arn
             
         except Exception as e:
@@ -303,39 +367,40 @@ psycopg2-binary==2.9.9
         print("=" * 60)
         
         # Step 1: Create deployment package
-        self.create_deployment_package()
+        if not self.create_deployment_package():
+            return False
         
         # Step 2: Install dependencies
         if not self.install_dependencies():
-            print("❌ Deployment failed: Could not install dependencies")
             return False
         
         # Step 3: Create ZIP package
         if not self.create_zip_package():
-            print("❌ Deployment failed: Package too large")
             return False
         
-        # Step 4: Create IAM role
+        # Step 4: Clean up packages after zipping
+        self.clean_deployment_directory()
+        
+        # Step 5: Create IAM role
         role_arn = self.create_lambda_role()
         if not role_arn:
-            print("❌ Deployment failed: Could not create IAM role")
             return False
         
-        # Step 5: Deploy Lambda function
+        # Step 6: Deploy Lambda function
         function_arn = self.deploy_lambda_function(role_arn)
         if not function_arn:
-            print("❌ Deployment failed: Could not deploy Lambda function")
             return False
+        
+        zip_size = self.zip_file.stat().st_size / (1024 * 1024)
         
         print("\n" + "=" * 60)
         print("🎉 DEPLOYMENT SUCCESSFUL!")
         print(f"📋 Function Name: {self.function_name}")
         print(f"📋 Function ARN: {function_arn}")
-        print(f"📋 Runtime: {self.runtime}")
-        print(f"📋 Handler: {self.handler}")
-        print(f"📋 Memory: {self.memory_size}MB")
-        print(f"📋 Timeout: {self.timeout}s")
-        print("\n🧪 Ready for testing!")
+        print(f"📁 Package Size: {zip_size:.1f}MB")
+        print(f"📊 Method: {'S3 Deployment' if zip_size > 50 else 'Direct Upload'}")
+        print(f"⚡ Memory: {self.memory_size}MB, Timeout: {self.timeout}s")
+        print("\n🧪 Ready for testing with scripts/test_lambda.py!")
         
         return True
     
@@ -343,11 +408,13 @@ psycopg2-binary==2.9.9
         """Clean up temporary files"""
         if self.zip_file.exists():
             self.zip_file.unlink()
-            print(f"✅ Cleaned up {self.zip_file}")
+            print(f"✅ Cleaned up ZIP file")
+        
+        self.clean_deployment_directory()
 
 
 if __name__ == "__main__":
-    print("AWS Lambda Deployment for Clinical Trial Safety Monitor")
+    print("AWS Lambda Deployment - With S3 Support for Large Packages")
     print("=" * 60)
     
     deployer = LambdaDeployer()
@@ -357,15 +424,17 @@ if __name__ == "__main__":
         
         if success:
             print("\n🎯 Next Steps:")
-            print("1. Test the Lambda function using scripts/test_lambda.py")
-            print("2. Integrate with Kafka consumer")
-            print("3. Set up CloudWatch monitoring")
+            print("1. Test: python scripts/test_lambda.py")
+            print("2. Check AWS Console for function details")
+            print("3. Monitor CloudWatch logs")
         else:
             print("\n❌ Deployment failed. Check error messages above.")
             
     except KeyboardInterrupt:
-        print("\n⚠️ Deployment cancelled by user")
+        print("\n⚠️ Deployment cancelled")
     except Exception as e:
         print(f"\n❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         deployer.cleanup()
