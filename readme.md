@@ -23,9 +23,12 @@ Real-time processing pipeline that monitors FDA adverse events, applies risk ass
 │     Output      │◀───│    Database     │◀───│   ML Models     │
 │                 │    │                 │    │                 │
 │ • Risk Alerts   │    │ PostgreSQL RDS  │    │ 86.28% Accuracy │
-│ • Classifications│    │ • Events Table  │    │ Gradient Boost  │
+│ • Classifications│   │ • Events Table  │    │ Gradient Boost  │
 │ • Safety Reports│    │ • Alerts Table  │    │ (Training Phase)│
 └─────────────────┘    └─────────────────┘    └─────────────────┘
+
+
+
 
 ## Technology Stack
 Data Processing: Python, Pandas, Scikit-learn
